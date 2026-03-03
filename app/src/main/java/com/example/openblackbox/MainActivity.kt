@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -642,7 +643,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             output.fileDescriptorOutputOptions != null -> {
-                capture.output.prepareRecording(this, output.fileDescriptorOutputOptions)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    capture.output.prepareRecording(this, output.fileDescriptorOutputOptions)
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.toast_recording_failed, getString(R.string.record_error_prepare_output)),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    updateRecordUi(isRecording = false)
+                    return
+                }
             }
 
             else -> {
@@ -651,8 +662,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         var pendingRecording: PendingRecording = pendingRecordingBase
-        if (settings.isAudioRecordingEnabled() && hasAudioPermission()) {
-            pendingRecording = pendingRecording.withAudioEnabled()
+        if (settings.isAudioRecordingEnabled()) {
+            val audioGranted =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+            if (audioGranted) {
+                try {
+                    pendingRecording = pendingRecording.withAudioEnabled()
+                } catch (_: SecurityException) {
+                    Toast.makeText(this, getString(R.string.permission_audio_needed), Toast.LENGTH_SHORT)
+                        .show()
+                }
+            }
         }
         currentRecording = pendingRecording.start(cameraExecutor) { event ->
             handleRecordEvent(event)
