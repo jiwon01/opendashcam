@@ -45,6 +45,12 @@ class AppSettings(context: Context) {
         prefs.edit().putString(KEY_STORAGE_PRESSURE_POLICY, policy.raw).apply()
     }
 
+    fun getAppLanguageMode(): AppLanguageMode = AppLanguageMode.fromRaw(prefs.getString(KEY_APP_LANGUAGE_MODE, null))
+
+    fun setAppLanguageMode(mode: AppLanguageMode) {
+        prefs.edit().putString(KEY_APP_LANGUAGE_MODE, mode.raw).apply()
+    }
+
     fun isTimeWatermarkEnabled(): Boolean = prefs.getBoolean(KEY_WATERMARK_TIME, true)
 
     fun setTimeWatermarkEnabled(enabled: Boolean) {
@@ -75,6 +81,12 @@ class AppSettings(context: Context) {
         prefs.edit().putBoolean(KEY_RECORDING_FOOTER_OVERLAY, enabled).apply()
     }
 
+    fun isKeepScreenOnEnabled(): Boolean = prefs.getBoolean(KEY_KEEP_SCREEN_ON, true)
+
+    fun setKeepScreenOnEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, enabled).apply()
+    }
+
     fun getExternalTreeUri(): Uri? {
         return prefs.getString(KEY_EXTERNAL_TREE_URI, null)?.let(Uri::parse)
     }
@@ -91,11 +103,13 @@ class AppSettings(context: Context) {
         private const val KEY_SEGMENT_MODE = "segment_mode"
         private const val KEY_SPEED_UNIT_MODE = "speed_unit_mode"
         private const val KEY_STORAGE_PRESSURE_POLICY = "storage_pressure_policy"
+        private const val KEY_APP_LANGUAGE_MODE = "app_language_mode"
         private const val KEY_RECORD_AUDIO = "record_audio"
         private const val KEY_WATERMARK_TIME = "watermark_time"
         private const val KEY_WATERMARK_LOCATION = "watermark_location"
         private const val KEY_WATERMARK_SPEED = "watermark_speed"
         private const val KEY_RECORDING_FOOTER_OVERLAY = "recording_footer_overlay"
+        private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         private const val KEY_EXTERNAL_TREE_URI = "external_tree_uri"
     }
 }

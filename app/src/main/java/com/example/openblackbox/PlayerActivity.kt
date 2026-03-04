@@ -6,12 +6,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.MediaController
 import android.widget.VideoView
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
-class PlayerActivity : AppCompatActivity() {
+class PlayerActivity : LocalizedAppCompatActivity() {
 
     private lateinit var videoView: VideoView
 

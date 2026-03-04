@@ -5,12 +5,11 @@ import android.content.ClipData
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import com.example.openblackbox.databinding.ActivityRecordingsBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
-class RecordingsActivity : AppCompatActivity() {
+class RecordingsActivity : LocalizedAppCompatActivity() {
 
     private lateinit var binding: ActivityRecordingsBinding
     private lateinit var settings: AppSettings
@@ -70,7 +69,11 @@ class RecordingsActivity : AppCompatActivity() {
             }
             startActivity(Intent.createChooser(intent, getString(R.string.share_video_title)))
         } catch (exception: Exception) {
-            Toast.makeText(this, exception.message ?: "Share failed", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                exception.message ?: getString(R.string.toast_share_failed),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

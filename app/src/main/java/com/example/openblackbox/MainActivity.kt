@@ -21,12 +21,12 @@ import android.os.ParcelFileDescriptor
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.Preview
@@ -63,17 +63,13 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : LocalizedAppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var settings: AppSettings
 
     private val cameraExecutor by lazy { ContextCompat.getMainExecutor(this) }
-    private val watermarkTimeFormat = SimpleDateFormat("yyyy.MM.dd  hh:mm:ssa", Locale.US)
-    private val watermarkZoneFormat = SimpleDateFormat("z", Locale.US)
     private val fileTimeFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-    private val overlayLabelGps = "GPS"
-    private val overlayLabelRec = "REC"
 
     private val overlayBackgroundPaint by lazy {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -174,6 +170,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         settings = AppSettings(this)
+        applyKeepScreenOnSetting(settings.isKeepScreenOnEnabled())
         overlayRecordingFooterEnabled = settings.isRecordingFooterOverlayEnabled()
         setupUi()
         setupOverlayInsets()
@@ -276,6 +273,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindSettingsDialog(dialogBinding: DialogSettingsBinding) {
         val canChangeCaptureConfig = currentRecording == null
+        val languageLabels = AppLanguageMode.entries.map { getString(it.labelRes) }
         val storageLabels = StorageMode.entries.map { getString(it.labelRes) }
         val storagePressureLabels = StoragePressurePolicy.entries.map { getString(it.labelRes) }
         val lensLabels = LensMode.entries.map { getString(it.labelRes) }
@@ -283,6 +281,7 @@ class MainActivity : AppCompatActivity() {
         val segmentLabels = SegmentMode.entries.map { getString(it.labelRes) }
         val speedUnitLabels = SpeedUnitMode.entries.map { getString(it.labelRes) }
 
+        dialogBinding.spinnerLanguage.adapter = spinnerAdapter(languageLabels)
         dialogBinding.spinnerStorage.adapter = spinnerAdapter(storageLabels)
         dialogBinding.spinnerStoragePressure.adapter = spinnerAdapter(storagePressureLabels)
         dialogBinding.spinnerLens.adapter = spinnerAdapter(lensLabels)
@@ -290,6 +289,7 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.spinnerSegment.adapter = spinnerAdapter(segmentLabels)
         dialogBinding.spinnerSpeedUnit.adapter = spinnerAdapter(speedUnitLabels)
 
+        dialogBinding.spinnerLanguage.setSelection(AppLanguageMode.entries.indexOf(settings.getAppLanguageMode()))
         dialogBinding.spinnerStorage.setSelection(StorageMode.entries.indexOf(settings.getStorageMode()))
         dialogBinding.spinnerStoragePressure.setSelection(
             StoragePressurePolicy.entries.indexOf(settings.getStoragePressurePolicy())
@@ -302,6 +302,24 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.spinnerStorage.isEnabled = canChangeCaptureConfig
         dialogBinding.spinnerLens.isEnabled = canChangeCaptureConfig
         dialogBinding.spinnerResolution.isEnabled = canChangeCaptureConfig
+
+        dialogBinding.spinnerLanguage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
+                val selected = AppLanguageMode.entries[position]
+                if (selected != settings.getAppLanguageMode()) {
+                    settings.setAppLanguageMode(selected)
+                    settingsDialog?.dismiss()
+                    recreate()
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
 
         dialogBinding.spinnerStorage.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(
@@ -415,6 +433,7 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.switchWatermarkSpeed.isChecked = settings.isSpeedWatermarkEnabled()
         dialogBinding.switchRecordingFooterOverlay.isChecked = settings.isRecordingFooterOverlayEnabled()
         dialogBinding.switchRecordAudio.isChecked = settings.isAudioRecordingEnabled()
+        dialogBinding.switchKeepScreenOn.isChecked = settings.isKeepScreenOnEnabled()
 
         dialogBinding.switchWatermarkTime.setOnCheckedChangeListener { _, checked ->
             settings.setTimeWatermarkEnabled(checked)
@@ -445,6 +464,10 @@ class MainActivity : AppCompatActivity() {
                 permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
             }
         }
+        dialogBinding.switchKeepScreenOn.setOnCheckedChangeListener { _, checked ->
+            settings.setKeepScreenOnEnabled(checked)
+            applyKeepScreenOnSetting(checked)
+        }
 
         dialogBinding.buttonSelectFolder.isEnabled = canChangeCaptureConfig
         dialogBinding.switchWatermarkSpeed.isEnabled = dialogBinding.switchWatermarkLocation.isChecked
@@ -454,6 +477,14 @@ class MainActivity : AppCompatActivity() {
             folderPickerLauncher.launch(settings.getExternalTreeUri())
         }
         refreshSettingsDialogStorageSummary()
+    }
+
+    private fun applyKeepScreenOnSetting(enabled: Boolean) {
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     private fun spinnerAdapter(values: List<String>): ArrayAdapter<String> {
@@ -845,7 +876,11 @@ class MainActivity : AppCompatActivity() {
             settings.setExternalTreeUri(uri)
             refreshSettingsDialogStorageSummary()
         } catch (exception: SecurityException) {
-            Toast.makeText(this, exception.message ?: "Permission failed", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                exception.message ?: getString(R.string.toast_permission_failed),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -947,9 +982,9 @@ class MainActivity : AppCompatActivity() {
     private fun formatSpeed(speedMps: Float?): String {
         val speedUnit = settings.getSpeedUnitMode()
         val unitLabel = if (speedUnit == SpeedUnitMode.KMH) {
-            "km/h"
+            getString(R.string.speed_unit_kmh)
         } else {
-            "mph"
+            getString(R.string.speed_unit_mph)
         }
         if (speedMps == null) {
             return "-- $unitLabel"
@@ -959,7 +994,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             speedMps * 2.2369363f
         }
-        return String.format(Locale.US, "%.0f %s", converted.coerceAtLeast(0f), unitLabel)
+        val locale = resources.configuration.locales[0]
+        return String.format(locale, "%.0f %s", converted.coerceAtLeast(0f), unitLabel)
     }
 
     private fun updateGpsIndicator(hasFix: Boolean) {
@@ -998,12 +1034,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun formatTimeWithZone(now: Date): String {
-        val timeText = watermarkTimeFormat.format(now)
+        val locale = resources.configuration.locales[0]
+        val timeText = SimpleDateFormat("yyyy.MM.dd  hh:mm:ssa", locale).format(now)
         val timeZone = TimeZone.getDefault()
         val zoneText = if (timeZone.id == "Asia/Seoul") {
             "KST"
         } else {
-            timeZone.getDisplayName(false, TimeZone.SHORT, Locale.US).uppercase(Locale.US)
+            timeZone.getDisplayName(false, TimeZone.SHORT, locale).uppercase(locale)
         }
         val safeZone = if (zoneText.isBlank()) {
             timeZone.id
@@ -1018,7 +1055,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 Toast.makeText(
                     this,
-                    throwable.message ?: "Overlay error",
+                    throwable.message ?: getString(R.string.toast_overlay_error),
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -1054,7 +1091,7 @@ class MainActivity : AppCompatActivity() {
         var badgeRight = frameWidth - (20f * uiScale)
         badgeRight = drawFooterBadge(
             canvas = canvas,
-            label = overlayLabelRec,
+            label = getString(R.string.label_footer_rec),
             textColor = if (overlayIsRecording && overlayRecBlinkOn) {
                 Color.parseColor("#FF3B30")
             } else {
@@ -1066,7 +1103,7 @@ class MainActivity : AppCompatActivity() {
         )
         badgeRight = drawFooterBadge(
             canvas = canvas,
-            label = overlayLabelGps,
+            label = getString(R.string.label_footer_gps),
             textColor = if (overlayGpsFix) {
                 Color.parseColor("#4CAF50")
             } else {

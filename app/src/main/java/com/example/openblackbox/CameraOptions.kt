@@ -72,3 +72,19 @@ enum class SpeedUnitMode(val raw: String, val labelRes: Int) {
         }
     }
 }
+
+enum class AppLanguageMode(val raw: String, val localeTag: String?, val labelRes: Int) {
+    SYSTEM("system", null, R.string.language_system),
+    KOREAN("ko", "ko", R.string.language_korean),
+    ENGLISH_US("en_us", "en-US", R.string.language_english_us),
+    JAPANESE("ja", "ja", R.string.language_japanese),
+    FRENCH("fr", "fr", R.string.language_french),
+    GERMAN("de", "de", R.string.language_german),
+    SPANISH("es", "es", R.string.language_spanish);
+
+    companion object {
+        fun fromRaw(raw: String?): AppLanguageMode {
+            return entries.firstOrNull { it.raw == raw } ?: SYSTEM
+        }
+    }
+}
