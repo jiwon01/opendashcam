@@ -11,6 +11,8 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
@@ -123,6 +125,8 @@ class MainActivity : LocalizedAppCompatActivity() {
     private var recBlinkOn: Boolean = false
     private var settingsDialog: AlertDialog? = null
     private var settingsDialogBinding: DialogSettingsBinding? = null
+    private var activeLocationListener: LocationListener? = null
+    private var lastSpeedSample: LocationSample? = null
 
     @Volatile
     private var overlayFooterText: String = ""
@@ -139,6 +143,9 @@ class MainActivity : LocalizedAppCompatActivity() {
     @Volatile
     private var overlayRecordingFooterEnabled: Boolean = true
 
+    @Volatile
+    private var latestLocationSnapshot: LocationSnapshot? = null
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -154,6 +161,7 @@ class MainActivity : LocalizedAppCompatActivity() {
         if (settings.isLocationWatermarkEnabled() && !hasLocationPermission()) {
             Toast.makeText(this, getString(R.string.permission_location_needed), Toast.LENGTH_SHORT).show()
         }
+        syncLocationUpdates()
         renderWatermark()
     }
 
@@ -185,11 +193,13 @@ class MainActivity : LocalizedAppCompatActivity() {
         } else {
             requestCorePermissions()
         }
+        syncLocationUpdates()
         startWatermarkLoop()
     }
 
     override fun onPause() {
         super.onPause()
+        stopLocationUpdates()
         stopWatermarkLoop()
     }
 
@@ -203,6 +213,7 @@ class MainActivity : LocalizedAppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         segmentJob?.cancel()
+        stopLocationUpdates()
         stopWatermarkLoop()
         stopRecBlink()
         settingsDialog?.dismiss()
@@ -446,6 +457,7 @@ class MainActivity : LocalizedAppCompatActivity() {
             if (checked && !hasLocationPermission()) {
                 permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
             }
+            syncLocationUpdates()
             renderWatermark()
         }
         dialogBinding.switchWatermarkSpeed.setOnCheckedChangeListener { _, checked ->
@@ -526,6 +538,64 @@ class MainActivity : LocalizedAppCompatActivity() {
 
     private fun requestCorePermissions() {
         permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+    }
+
+    private fun shouldTrackLocation(): Boolean {
+        return settings.isLocationWatermarkEnabled() && hasLocationPermission()
+    }
+
+    private fun syncLocationUpdates() {
+        if (shouldTrackLocation()) {
+            startLocationUpdates()
+        } else {
+            stopLocationUpdates()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        if (activeLocationListener != null) return
+        val locationManager = getSystemService(LocationManager::class.java) ?: return
+        val enabledProviders = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER,
+            LocationManager.NETWORK_PROVIDER
+        ).filter { provider ->
+            runCatching { locationManager.isProviderEnabled(provider) }.getOrDefault(false)
+        }
+        if (enabledProviders.isEmpty()) return
+
+        lastSpeedSample = null
+        latestLocationSnapshot = getBestLastKnownLocationSnapshot(locationManager)
+
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                updateLatestLocationSnapshot(location)
+            }
+        }
+
+        enabledProviders.forEach { provider ->
+            runCatching {
+                locationManager.requestLocationUpdates(
+                    provider,
+                    LOCATION_UPDATE_INTERVAL_MS,
+                    0f,
+                    listener,
+                    Looper.getMainLooper()
+                )
+            }
+        }
+        activeLocationListener = listener
+    }
+
+    private fun stopLocationUpdates() {
+        val listener = activeLocationListener ?: return
+        val locationManager = getSystemService(LocationManager::class.java)
+        if (locationManager != null) {
+            runCatching { locationManager.removeUpdates(listener) }
+        }
+        activeLocationListener = null
+        lastSpeedSample = null
     }
 
     private fun startCamera() {
@@ -960,23 +1030,74 @@ class MainActivity : LocalizedAppCompatActivity() {
             return LocationSnapshot(getString(R.string.watermark_no_location), false, null)
         }
 
+        latestLocationSnapshot?.let { return it }
+
         val locationManager = getSystemService(LocationManager::class.java)
             ?: return LocationSnapshot(getString(R.string.watermark_no_location), false, null)
 
+        return getBestLastKnownLocationSnapshot(locationManager)
+            ?: LocationSnapshot(getString(R.string.watermark_no_location), false, null)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun getBestLastKnownLocationSnapshot(locationManager: LocationManager): LocationSnapshot? {
         val providers = locationManager.getProviders(true)
-        val latest = providers.asSequence()
+        val latestLocation = providers.asSequence()
             .mapNotNull { provider ->
                 runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
             }
             .maxByOrNull { it.time }
 
-        return latest?.let {
-            LocationSnapshot(
-                text = String.format(Locale.US, "%.5f, %.5f", it.latitude, it.longitude),
-                hasFix = true,
-                speedMps = if (it.hasSpeed()) it.speed.coerceAtLeast(0f) else 0f
-            )
-        } ?: LocationSnapshot(getString(R.string.watermark_no_location), false, null)
+        return latestLocation?.let(::createLastKnownLocationSnapshot)
+    }
+
+    private fun createLastKnownLocationSnapshot(location: Location): LocationSnapshot {
+        val isRecent = location.time > 0L &&
+            (System.currentTimeMillis() - location.time) in 0..LAST_KNOWN_SPEED_FRESHNESS_MS
+        return LocationSnapshot(
+            text = String.format(Locale.US, "%.5f, %.5f", location.latitude, location.longitude),
+            hasFix = true,
+            speedMps = if (isRecent && location.hasSpeed()) location.speed.coerceAtLeast(0f) else null
+        )
+    }
+
+    private fun updateLatestLocationSnapshot(location: Location) {
+        val estimatedSpeedMps = estimateSpeedFromLocation(location)
+        val directSpeedMps = location.speed.takeIf { location.hasSpeed() }?.coerceAtLeast(0f)
+        latestLocationSnapshot = LocationSnapshot(
+            text = String.format(Locale.US, "%.5f, %.5f", location.latitude, location.longitude),
+            hasFix = true,
+            speedMps = when {
+                directSpeedMps == null -> estimatedSpeedMps
+                directSpeedMps > 0f -> directSpeedMps
+                estimatedSpeedMps != null -> estimatedSpeedMps
+                else -> directSpeedMps
+            }
+        )
+    }
+
+    private fun estimateSpeedFromLocation(location: Location): Float? {
+        val sample = location.toLocationSample() ?: return null
+        val estimatedSpeedMps = LocationSpeedEstimator.estimateSpeedMps(lastSpeedSample, sample)
+        lastSpeedSample = sample
+        return estimatedSpeedMps
+    }
+
+    private fun Location.toLocationSample(): LocationSample? {
+        val timestampMillis = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 &&
+            elapsedRealtimeNanos > 0L
+        ) {
+            elapsedRealtimeNanos / 1_000_000L
+        } else {
+            time.takeIf { it > 0L }
+        } ?: return null
+
+        return LocationSample(
+            latitude = latitude,
+            longitude = longitude,
+            timestampMillis = timestampMillis,
+            accuracyMeters = accuracy.takeIf { hasAccuracy() }
+        )
     }
 
     private fun formatSpeed(speedMps: Float?): String {
@@ -1210,4 +1331,9 @@ class MainActivity : LocalizedAppCompatActivity() {
         val hasFix: Boolean,
         val speedMps: Float?
     )
+
+    private companion object {
+        const val LOCATION_UPDATE_INTERVAL_MS = 1_000L
+        const val LAST_KNOWN_SPEED_FRESHNESS_MS = 5_000L
+    }
 }
